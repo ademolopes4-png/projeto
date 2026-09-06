@@ -26,12 +26,11 @@ class FilaView(discord.ui.View):
 
   def gerar_embed(self, bot_user=None):
     embed = discord.Embed(
-        title="⚔️ SISTEMA DE PARTIDAS 1V1 E PULA CONTRA ⚔️",
-        description="Clique no botão correspondente para entrar ou sair da fila:",
+        title="⚔️ SISTEMA DE PARTIDAS 1V1 & PULA CONTRA",
+        description="Clique nos botões abaixo para gerenciar sua entrada ou saída das filas.",
         color=discord.Color.blurple(),
     )
 
-    # Fila 1v1
     texto_1v1 = (
         f"({len(fila_1v1)}/2)\n"
         if not fila_1v1
@@ -40,7 +39,6 @@ class FilaView(discord.ui.View):
     )
     embed.add_field(name="🎮 Fila 1v1", value=texto_1v1, inline=False)
 
-    # Fila Pula Contra
     texto_pc = (
         f"({len(fila_pula_contra)}/2)\n"
         if not fila_pula_contra
@@ -89,26 +87,6 @@ class FilaView(discord.ui.View):
       )
 
   @discord.ui.button(
-      label="Sair 1v1",
-      style=discord.ButtonStyle.danger,
-      custom_id="btn_sair_1v1",
-  )
-  async def callback_sair_1v1(
-      self, interaction: discord.Interaction, button: discord.ui.Button
-  ):
-    user = interaction.user
-    if user in fila_1v1:
-      fila_1v1.remove(user)
-      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
-      await interaction.response.send_message(
-          "Você saiu da fila **1v1**.", ephemeral=True
-      )
-    else:
-      await interaction.response.send_message(
-          "Você não está na fila 1v1.", ephemeral=True
-      )
-
-  @discord.ui.button(
       label="Entrar Pula Contra",
       style=discord.ButtonStyle.success,
       custom_id="btn_pula_contra",
@@ -145,23 +123,32 @@ class FilaView(discord.ui.View):
       )
 
   @discord.ui.button(
-      label="Sair Pula Contra",
+      label="Sair da Fila",
       style=discord.ButtonStyle.danger,
-      custom_id="btn_sair_pula_contra",
+      custom_id="btn_sair_geral",
   )
-  async def callback_sair_pula_contra(
+  async def callback_sair_geral(
       self, interaction: discord.Interaction, button: discord.ui.Button
   ):
     user = interaction.user
+    saiu = False
+
+    if user in fila_1v1:
+      fila_1v1.remove(user)
+      saiu = True
+
     if user in fila_pula_contra:
       fila_pula_contra.remove(user)
+      saiu = True
+
+    if saiu:
       await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
       await interaction.response.send_message(
-          "Você saiu da fila **Pula Contra**.", ephemeral=True
+          "Você saiu de todas as filas.", ephemeral=True
       )
     else:
       await interaction.response.send_message(
-          "Você não está na fila Pula Contra.", ephemeral=True
+          "Você não está em nenhuma fila no momento.", ephemeral=True
       )
 
   @discord.ui.button(
