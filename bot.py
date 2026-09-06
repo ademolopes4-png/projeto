@@ -1,5 +1,6 @@
 import asyncio
 import datetime
+import os
 import random
 import discord
 from discord.ext import commands
@@ -10,10 +11,9 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Estruturas de dados em memória
 fila_1v1 = []
 fila_pula_contra = []
-ranking_vitorias = {}  # Formato: {user_id: total_vitorias}
+ranking_vitorias = {}
 
 LOG_CHANNEL_NAME = "logs-partidas"
 RANKING_CHANNEL_NAME = "ranking"
@@ -354,7 +354,6 @@ async def on_ready():
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def painel(ctx):
-  """Comando para enviar o painel com os botões das filas no canal #filas"""
   view = FilaView()
   await ctx.send(
       "⚔️ **SISTEMA DE PARTIDAS 1V1 E PULA CONTRA** ⚔️\nClique no botão"
@@ -364,6 +363,6 @@ async def painel(ctx):
   await ctx.message.delete()
 
 
-bot.run(
-    "MTU0NjExODMwNzg0Nzg2ODQ3NA.GvgbHt.LaMpNSChN2I50jrzFq0YjmN8vVvtQTRwCdBzqc"
-)
+# Puxa o token de forma segura da hospedagem
+bot.run(os.getenv("DISCORD_TOKEN"))
+
