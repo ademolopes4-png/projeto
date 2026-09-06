@@ -26,7 +26,7 @@ class FilaView(discord.ui.View):
 
   def gerar_embed(self, bot_user=None):
     embed = discord.Embed(
-        title="⚔️ SISTEMA DE PARTIDAS 1V1 & PULA CONTRA",
+        title="⚔️ Sistema de Partidas",
         description="Clique nos botões abaixo para gerenciar sua entrada ou saída das filas.",
         color=discord.Color.blurple(),
     )
@@ -64,9 +64,7 @@ class FilaView(discord.ui.View):
   ):
     user = interaction.user
     if user in fila_1v1:
-      await interaction.response.send_message(
-          "Você já está na fila 1v1!", ephemeral=True
-      )
+      await interaction.response.defer()
       return
 
     if user in fila_pula_contra:
@@ -74,9 +72,7 @@ class FilaView(discord.ui.View):
 
     fila_1v1.append(user)
     await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
-    await interaction.response.send_message(
-        "Você entrou na fila **1v1**!", ephemeral=True
-    )
+    await interaction.response.defer()
 
     if len(fila_1v1) >= 2:
       p1 = fila_1v1.pop(0)
@@ -96,9 +92,7 @@ class FilaView(discord.ui.View):
   ):
     user = interaction.user
     if user in fila_pula_contra:
-      await interaction.response.send_message(
-          "Você já está na fila Pula Contra!", ephemeral=True
-      )
+      await interaction.response.defer()
       return
 
     if user in fila_1v1:
@@ -106,9 +100,7 @@ class FilaView(discord.ui.View):
 
     fila_pula_contra.append(user)
     await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
-    await interaction.response.send_message(
-        "Você entrou na fila **Pula Contra**!", ephemeral=True
-    )
+    await interaction.response.defer()
 
     if len(fila_pula_contra) >= 2:
       p1 = fila_pula_contra.pop(0)
@@ -143,13 +135,8 @@ class FilaView(discord.ui.View):
 
     if saiu:
       await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
-      await interaction.response.send_message(
-          "Você saiu de todas as filas.", ephemeral=True
-      )
-    else:
-      await interaction.response.send_message(
-          "Você não está em nenhuma fila no momento.", ephemeral=True
-      )
+    
+    await interaction.response.defer()
 
   @discord.ui.button(
       label="Ranking Geral",
