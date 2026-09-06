@@ -24,8 +24,40 @@ class FilaView(discord.ui.View):
   def __init__(self):
     super().__init__(timeout=None)
 
+  def gerar_embed(self, bot_user=None):
+    embed = discord.Embed(
+        title="⚔️ SISTEMA DE PARTIDAS 1V1 E PULA CONTRA ⚔️",
+        description="Clique no botão correspondente para entrar ou sair da fila:",
+        color=discord.Color.blurple(),
+    )
+
+    # Fila 1v1
+    texto_1v1 = (
+        f"({len(fila_1v1)}/2)\n"
+        if not fila_1v1
+        else f"({len(fila_1v1)}/2)\n"
+        + "\n".join([f"• {m.mention}" for m in fila_1v1])
+    )
+    embed.add_field(name="🎮 Fila 1v1", value=texto_1v1, inline=False)
+
+    # Fila Pula Contra
+    texto_pc = (
+        f"({len(fila_pula_contra)}/2)\n"
+        if not fila_pula_contra
+        else f"({len(fila_pula_contra)}/2)\n"
+        + "\n".join([f"• {m.mention}" for m in fila_pula_contra])
+    )
+    embed.add_field(
+        name="⚡ Fila Pula Contra", value=texto_pc, inline=False
+    )
+
+    if bot_user and bot_user.avatar:
+      embed.set_thumbnail(url=bot_user.avatar.url)
+
+    return embed
+
   @discord.ui.button(
-      label="Entrar na Fila 1v1",
+      label="Entrar 1v1",
       style=discord.ButtonStyle.primary,
       custom_id="btn_1v1",
   )
@@ -43,20 +75,41 @@ class FilaView(discord.ui.View):
       fila_pula_contra.remove(user)
 
     fila_1v1.append(user)
+    await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
     await interaction.response.send_message(
-        f"{user.mention} entrou na fila **1v1**! ({len(fila_1v1)}/2)",
-        ephemeral=True,
+        "Você entrou na fila **1v1**!", ephemeral=True
     )
 
     if len(fila_1v1) >= 2:
       p1 = fila_1v1.pop(0)
       p2 = fila_1v1.pop(0)
+      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
       await criar_sala_partida(
           interaction.guild, p1, p2, "1v1", "Full ump & Xm8 - Primeira só desert"
       )
 
   @discord.ui.button(
-      label="Entrar na Fila Pula Contra",
+      label="Sair 1v1",
+      style=discord.ButtonStyle.danger,
+      custom_id="btn_sair_1v1",
+  )
+  async def callback_sair_1v1(
+      self, interaction: discord.Interaction, button: discord.ui.Button
+  ):
+    user = interaction.user
+    if user in fila_1v1:
+      fila_1v1.remove(user)
+      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+      await interaction.response.send_message(
+          "Você saiu da fila **1v1**.", ephemeral=True
+      )
+    else:
+      await interaction.response.send_message(
+          "Você não está na fila 1v1.", ephemeral=True
+      )
+
+  @discord.ui.button(
+      label="Entrar Pula Contra",
       style=discord.ButtonStyle.success,
       custom_id="btn_pula_contra",
   )
@@ -74,20 +127,41 @@ class FilaView(discord.ui.View):
       fila_1v1.remove(user)
 
     fila_pula_contra.append(user)
+    await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
     await interaction.response.send_message(
-        f"{user.mention} entrou na fila **Pula Contra**! ({len(fila_pula_contra)}/2)",
-        ephemeral=True,
+        "Você entrou na fila **Pula Contra**!", ephemeral=True
     )
 
     if len(fila_pula_contra) >= 2:
       p1 = fila_pula_contra.pop(0)
       p2 = fila_pula_contra.pop(0)
+      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
       await criar_sala_partida(
           interaction.guild,
           p1,
           p2,
           "Pula Contra",
           "Full ump & Xm8 - Primeira só desert",
+      )
+
+  @discord.ui.button(
+      label="Sair Pula Contra",
+      style=discord.ButtonStyle.danger,
+      custom_id="btn_sair_pula_contra",
+  )
+  async def callback_sair_pula_contra(
+      self, interaction: discord.Interaction, button: discord.ui.Button
+  ):
+    user = interaction.user
+    if user in fila_pula_contra:
+      fila_pula_contra.remove(user)
+      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+      await interaction.response.send_message(
+          "Você saiu da fila **Pula Contra**.", ephemeral=True
+      )
+    else:
+      await interaction.response.send_message(
+          "Você não está na fila Pula Contra.", ephemeral=True
       )
 
   @discord.ui.button(
@@ -355,14 +429,10 @@ async def on_ready():
 @commands.has_permissions(administrator=True)
 async def painel(ctx):
   view = FilaView()
-  await ctx.send(
-      "⚔️ **SISTEMA DE PARTIDAS 1V1 E PULA CONTRA** ⚔️\nClique no botão"
-      " correspondente para entrar na fila:",
-      view=view,
-  )
+  embed = view.gerar_embed(ctx.bot.user)
+  await ctx.send(embed=embed, view=view)
   await ctx.message.delete()
 
 
-# Puxa o token de forma segura da hospedagem
 bot.run(os.getenv("DISCORD_TOKEN"))
 
