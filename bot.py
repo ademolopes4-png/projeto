@@ -4,6 +4,7 @@ import os
 import random
 import discord
 from discord.ext import commands
+from aiohttp import web
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -408,5 +409,26 @@ async def painel(ctx):
   await ctx.message.delete()
 
 
-bot.run(os.getenv("DISCORD_TOKEN"))
+# Configuração do Mini Servidor Web para o Render e UptimeRobot
+async def handle(request):
+  return web.Response(text="Bot de Partidas Online!")
+
+
+async def start_web_server():
+  app = web.Application()
+  app.router.add_get("/", handle)
+  runner = web.AppRunner(app)
+  await runner.setup()
+  port = int(os.environ.get("PORT", 8080))
+  site = web.TCPSite(runner, "0.0.0.0", port)
+  await site.start()
+
+
+async def main():
+  await start_web_server()
+  await bot.start(os.getenv("DISCORD_TOKEN"))
+
+
+if __name__ == "__main__":
+  asyncio.run(main())
 
