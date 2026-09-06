@@ -32,9 +32,11 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 fila_1v1 = []
 fila_pula_contra = []
 ranking_vitorias = {}
+ranking_derrotas = {}
+admins_em_servico = set()  # Guarda os IDs dos administradores em serviço
 
 LOG_CHANNEL_NAME = "logs-partidas"
-RANKING_CHANNEL_NAME = "ranking"
+painel_mensagem_ref = None  # Guarda a referência da mensagem do painel principal para atualizar sozinha
 
 
 class FilaView(discord.ui.View):
@@ -44,11 +46,39 @@ class FilaView(discord.ui.View):
 
   def gerar_embed(self, bot_user=None):
     embed = discord.Embed(
-        title="Sistema de Partidas",
-        description="Clique nos botões abaixo para gerenciar sua entrada ou saída das filas.",
+        title="🎮 Sistema de Partidas",
+        description="Clique nos botões abaixo para entrar ou sair das filas.",
         color=discord.Color.blurple(),
     )
 
+    # --- TOP 3 VITÓRIAS (Esquerda) ---
+    top_vitorias = sorted(ranking_vitorias.items(), key=lambda x: x[1], reverse=True)[:3]
+    texto_vit = ""
+    if not top_vitorias:
+      texto_vit = "Nenhum ainda."
+    else:
+      medalhas = ["🥇", "🥈", "🥉"]
+      for i, (uid, vit) in enumerate(top_vitorias):
+        texto_vit += f"{medalhas[i]} <@{uid}>: **{vit}V**\n"
+
+    embed.add_field(name="🏆 Top 3 Vitórias", value=texto_vit, inline=True)
+
+    # --- TOP 3 DERROTAS (Direita) ---
+    top_derrotas = sorted(ranking_derrotas.items(), key=lambda x: x[1], reverse=True)[:3]
+    texto_der = ""
+    if not top_derrotas:
+      texto_der = "Nenhum ainda."
+    else:
+      medalhas = ["🥇", "🥈", "🥉"]
+      for i, (uid, der) in enumerate(top_derrotas):
+        texto_der += f"{medalhas[i]} <@{uid}>: **{der}D**\n"
+
+    embed.add_field(name="💀 Top 3 Derrotas", value=texto_der, inline=True)
+
+    # Espaçamento visual
+    embed.add_field(name="\u200b", value="\u200b", inline=False)
+
+    # --- FILAS ---
     texto_1v1 = (
         f"({len(fila_1v1)}/2)\n"
         if not fila_1v1
@@ -89,13 +119,13 @@ class FilaView(discord.ui.View):
       fila_pula_contra.remove(user)
 
     fila_1v1.append(user)
-    await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+    await atualizar_painel_principal(interaction.client)
     await interaction.response.defer()
 
     if len(fila_1v1) >= 2:
       p1 = fila_1v1.pop(0)
       p2 = fila_1v1.pop(0)
-      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+      await atualizar_painel_principal(interaction.client)
       await criar_sala_partida(interaction.guild, p1, p2, "1v1")
 
   @discord.ui.button(
@@ -115,13 +145,13 @@ class FilaView(discord.ui.View):
       fila_1v1.remove(user)
 
     fila_pula_contra.append(user)
-    await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+    await atualizar_painel_principal(interaction.client)
     await interaction.response.defer()
 
     if len(fila_pula_contra) >= 2:
       p1 = fila_pula_contra.pop(0)
       p2 = fila_pula_contra.pop(0)
-      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+      await atualizar_painel_principal(interaction.client)
       await criar_sala_partida(interaction.guild, p1, p2, "Pula Contra")
 
   @discord.ui.button(
@@ -144,44 +174,104 @@ class FilaView(discord.ui.View):
       saiu = True
 
     if saiu:
-      await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
+      await atualizar_painel_principal(interaction.client)
     
     await interaction.response.defer()
 
   @discord.ui.button(
-      label="Ranking Geral",
+      label="Ranking Completo",
       style=discord.ButtonStyle.secondary,
       custom_id="btn_ranking_geral",
   )
   async def callback_ranking(
       self, interaction: discord.Interaction, button: discord.ui.Button
   ):
-    if not ranking_vitorias:
+    if not ranking_vitorias and not ranking_derrotas:
       await interaction.response.send_message(
           "O ranking ainda está vazio!", ephemeral=True
       )
       return
 
-    ranking_ordenado = sorted(
-        ranking_vitorias.items(), key=lambda x: x[1], reverse=True
-    )
-    texto = "🏆 **Ranking Geral de Vitórias**\n\n"
-    for i, (uid, vitorias) in enumerate(ranking_ordenado, 1):
-      texto += f"{i}º - <@{uid}>: {vitorias} vitórias\n"
+    todos_membros = set(list(ranking_vitorias.keys()) + list(ranking_derrotas.keys()))
+    texto = "🏆 **Ranking Geral Completo**\n\n"
+    for uid in todos_membros:
+      v = ranking_vitorias.get(uid, 0)
+      d = ranking_derrotas.get(uid, 0)
+      texto += f"• <@{uid}> — **{v}** Vitórias | **{d}** Derrotas\n"
 
     await interaction.response.send_message(texto, ephemeral=True)
 
 
+class ServicoAdminView(discord.ui.View):
+  def __init__(self):
+    super().__init__(timeout=None)
+
+  def gerar_embed_servico(self):
+    embed = discord.Embed(
+        title="Painel de Atendimento - Staff",
+        description="Clique abaixo para entrar ou sair de serviço como mediador de partidas.",
+        color=discord.Color.gold(),
+    )
+    
+    if not admins_em_servico:
+      texto_staff = "Nenhum administrador em serviço no momento."
+    else:
+      texto_staff = "\n".join([f"• <@{uid}>" for uid in admins_em_servico])
+
+    embed.add_field(name="🛡️ Admins em Serviço:", value=texto_staff, inline=False)
+    return embed
+
+  @discord.ui.button(
+      label="Entrar em Serviço",
+      style=discord.ButtonStyle.success,
+      custom_id="btn_entrar_servico",
+  )
+  async def entrar_servico(self, interaction: discord.Interaction, button: discord.ui.Button):
+    is_admin = (
+        any(r.name in ["Dono", "Administrador"] for r in interaction.user.roles)
+        or interaction.user.guild_permissions.administrator
+    )
+    if not is_admin and interaction.user != interaction.guild.owner:
+      await interaction.response.send_message("Apenas administradores podem entrar em serviço.", ephemeral=True)
+      return
+
+    if interaction.user.id in admins_em_servico:
+      await interaction.response.send_message("Você já está em serviço!", ephemeral=True)
+      return
+
+    admins_em_servico.add(interaction.user.id)
+    await interaction.message.edit(embed=self.gerar_embed_servico())
+    await interaction.response.send_message("Você entrou em serviço com sucesso!", ephemeral=True)
+
+  @discord.ui.button(
+      label="Sair de Serviço",
+      style=discord.ButtonStyle.danger,
+      custom_id="btn_sair_servico",
+  )
+  async def sair_servico(self, interaction: discord.Interaction, button: discord.ui.Button):
+    if interaction.user.id not in admins_em_servico:
+      await interaction.response.send_message("Você não está em serviço.", ephemeral=True)
+      return
+
+    admins_em_servico.remove(interaction.user.id)
+    await interaction.message.edit(embed=self.gerar_embed_servico())
+    await interaction.response.send_message("Você saiu de serviço.", ephemeral=True)
+
+
 class PainelPartidaView(discord.ui.View):
 
-  def __init__(self, p1, p2, tipo_jogo):
+  def __init__(self, p1, p2, tipo_jogo, mediador, horario_inicio):
     super().__init__(timeout=None)
     self.p1 = p1
     self.p2 = p2
     self.tipo_jogo = tipo_jogo
+    self.mediador = mediador
+    self.horario_inicio = horario_inicio
     self.confirmados = set()
     self.vencedor = None
+    self.perdedor = None
     self.tipo_vitoria = None
+    self.finalizador = None
 
   @discord.ui.button(
       label="Confirmar Partida",
@@ -206,7 +296,6 @@ class PainelPartidaView(discord.ui.View):
     self.confirmados.add(interaction.user)
     
     if len(self.confirmados) == 2:
-      button.disabled = True
       for child in self.children:
         if isinstance(child, discord.ui.Button) and child.custom_id == "btn_confirma_partida":
           child.disabled = True
@@ -214,10 +303,8 @@ class PainelPartidaView(discord.ui.View):
       await interaction.message.edit(view=self)
       await interaction.response.send_message("Partida confirmada por ambos!", ephemeral=True)
 
-      cargo_admin = discord.utils.get(interaction.guild.roles, name="Administrador")
-      mencao_admin = cargo_admin.mention if cargo_admin else "@administrador"
-      
-      await interaction.channel.send(f"Bora trabalhar seus vagabundos {mencao_admin}")
+      mencao_med = self.mediador.mention if self.mediador else "@administrador"
+      await interaction.channel.send(f"Bora trabalhar seu vagabundo {mencao_med}")
       
       self.add_item(AdminVitoriaSelect(self))
       self.add_item(FecharCanalButton(self))
@@ -251,7 +338,7 @@ class AdminVitoriaSelect(discord.ui.Select):
         ),
     ]
     super().__init__(
-        placeholder="Definir Vencedor (Apenas Admin/Dono)",
+        placeholder="Definir Vencedor (Apenas Mediador/Dono)",
         min_values=1,
         max_values=1,
         options=options,
@@ -278,9 +365,15 @@ class AdminVitoriaSelect(discord.ui.Select):
       self.partida_view.tipo_vitoria = "Normal"
 
     self.partida_view.vencedor = interaction.guild.get_member(winner_id)
+    self.partida_view.perdedor = self.partida_view.p2 if self.partida_view.vencedor == self.partida_view.p1 else self.partida_view.p1
+    self.partida_view.finalizador = interaction.user
 
-    ranking_vitorias[winner_id] = ranking_vitorias.get(winner_id, 0) + 1
-    await atualizar_painel_ranking(interaction.guild)
+    # Atualiza placar geral
+    ranking_vitorias[self.partida_view.vencedor.id] = ranking_vitorias.get(self.partida_view.vencedor.id, 0) + 1
+    ranking_derrotas[self.partida_view.perdedor.id] = ranking_derrotas.get(self.partida_view.perdedor.id, 0) + 1
+
+    # Atualiza o painel principal com os novos Tops
+    await atualizar_painel_principal(interaction.client)
 
     await interaction.response.send_message(
         f"🏆 Vencedor definido: **{self.partida_view.vencedor.name}** ("
@@ -313,13 +406,20 @@ class FecharCanalButton(discord.ui.Button):
         interaction.guild.text_channels, name=LOG_CHANNEL_NAME
     )
     if log_channel and self.partida_view.vencedor:
-      agora = datetime.datetime.now().strftime("%d/%m/%Y às %H:%M")
+      horario_fim = datetime.datetime.now().strftime("%d/%m/%Y às %H:%M")
+      mediador_mencao = self.partida_view.mediador.mention if self.partida_view.mediador else "Nenhum"
+      finalizador_mencao = self.partida_view.finalizador.mention if self.partida_view.finalizador else "Desconhecido"
+
       msg_log = (
           f"📋 **Registro de Partida Finalizada**\n"
-          f"• **Tipo:** {self.partida_view.tipo_jogo}\n"
-          f"• **Vencedor:** {self.partida_view.vencedor.mention}\n"
-          f"• **Modo de Vitória:** {self.partida_view.tipo_vitoria}\n"
-          f"• **Data/Horário:** {agora}"
+          f"• **Tipo de Jogo:** {self.partida_view.tipo_jogo}\n"
+          f"• **Jogadores:** {self.partida_view.p1.mention} vs {self.partida_view.p2.mention}\n"
+          f"• **Vencedor:** {self.partida_view.vencedor.mention} ({self.partida_view.tipo_vitoria})\n"
+          f"• **Derrotado:** {self.partida_view.perdedor.mention}\n"
+          f"• **Mediador Responsável:** {mediador_mencao}\n"
+          f"• **Finalizado por:** {finalizador_mencao}\n"
+          f"• **Horário de Início:** {self.partida_view.horario_inicio}\n"
+          f"• **Horário de Término:** {horario_fim}"
       )
       await log_channel.send(msg_log)
 
@@ -331,6 +431,11 @@ class FecharCanalButton(discord.ui.Button):
 
 
 async def criar_sala_partida(guild, p1, p2, tipo_jogo):
+  mediador = None
+  if admins_em_servico:
+    admin_id_sorteado = random.choice(list(admins_em_servico))
+    mediador = guild.get_member(admin_id_sorteado)
+
   overwrites = {
       guild.default_role: discord.PermissionOverwrite(view_channel=False),
       p1: discord.PermissionOverwrite(view_channel=True, send_messages=True),
@@ -340,11 +445,12 @@ async def criar_sala_partida(guild, p1, p2, tipo_jogo):
       ),
   }
 
-  for role in guild.roles:
-    if role.name in ["Dono", "Administrador"]:
-      overwrites[role] = discord.PermissionOverwrite(
-          view_channel=True, send_messages=True
-      )
+  if mediador:
+    overwrites[mediador] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+  else:
+    cargo_admin = discord.utils.get(guild.roles, name="Administrador")
+    if cargo_admin:
+      overwrites[cargo_admin] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
   categoria = discord.utils.get(
       guild.categories, name="[🎮] 1V1 & PULA CONTRA"
@@ -357,10 +463,14 @@ async def criar_sala_partida(guild, p1, p2, tipo_jogo):
       name=nome_canal, category=categoria, overwrites=overwrites
   )
 
-  view = PainelPartidaView(p1, p2, tipo_jogo)
+  horario_inicio = datetime.datetime.now().strftime("%d/%m/%Y às %H:%M")
+  view = PainelPartidaView(p1, p2, tipo_jogo, mediador, horario_inicio)
+  
+  mencao_mediador_txt = mediador.mention if mediador else "Nenhum (Nenhum admin em serviço)"
   txt = (
       f"🎮 **Nova Partida de {tipo_jogo} criada!**\n"
-      f"Jogadores: {p1.mention} vs {p2.mention}\n\n"
+      f"Jogadores: {p1.mention} vs {p2.mention}\n"
+      f"🛡️ **Mediador Sorteado:** {mencao_mediador_txt}\n\n"
       "**Regra básica:**\n"
       "Full Ump & Xm8 - Primeiro round Desert\n\n"
       "Clique no botão abaixo para confirmar a partida:"
@@ -368,36 +478,22 @@ async def criar_sala_partida(guild, p1, p2, tipo_jogo):
   await canal.send(txt, view=view)
 
 
-async def atualizar_painel_ranking(guild):
-  canal_ranking = discord.utils.get(
-      guild.text_channels, name=RANKING_CHANNEL_NAME
-  )
-  if not canal_ranking:
-    return
-
-  async for message in canal_ranking.history(limit=10):
-    await message.delete()
-
-  ranking_ordenado = sorted(
-      ranking_vitorias.items(), key=lambda x: x[1], reverse=True
-  )[:3]
-
-  texto = "🏆 **PAINEL DE RANKING - TOP 3** 🏆\n\n"
-  if not ranking_ordenado:
-    texto += "Ainda não há partidas finalizadas."
-  else:
-    medalhas = ["🥇", "🥈", "🥉"]
-    for i, (uid, vitorias) in enumerate(ranking_ordenado):
-      texto += f"{medalhas[i]} <@{uid}> — **{vitorias} vitórias**\n"
-
-  await canal_ranking.send(texto)
+async def atualizar_painel_principal(client):
+  global painel_mensagem_ref
+  if painel_mensagem_ref:
+    try:
+      view = FilaView()
+      embed = view.gerar_embed(client.user)
+      await painel_mensagem_ref.edit(embed=embed, view=view)
+    except Exception:
+      pass
 
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def add(ctx, membro: discord.Member, quantidade: int):
   ranking_vitorias[membro.id] = ranking_vitorias.get(membro.id, 0) + quantidade
-  await atualizar_painel_ranking(ctx.guild)
+  await atualizar_painel_principal(ctx.bot)
   await ctx.send(f"Adicionadas {quantidade} vitória(s) para {membro.mention}!")
 
 
@@ -407,7 +503,7 @@ async def tirar(ctx, membro: discord.Member, quantidade: int):
   atual = ranking_vitorias.get(membro.id, 0)
   novo_valor = max(0, atual - quantidade)
   ranking_vitorias[membro.id] = novo_valor
-  await atualizar_painel_ranking(ctx.guild)
+  await atualizar_painel_principal(ctx.bot)
   await ctx.send(f"Removidas {quantidade} vitória(s) de {membro.mention}!")
 
 
@@ -415,18 +511,28 @@ async def tirar(ctx, membro: discord.Member, quantidade: int):
 async def on_ready():
   print(f"Bot conectado como {bot.user}!")
   bot.add_view(FilaView())
+  bot.add_view(ServicoAdminView())
 
 
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def painel(ctx):
+  global painel_mensagem_ref
   view = FilaView()
   embed = view.gerar_embed(ctx.bot.user)
+  painel_mensagem_ref = await ctx.send(embed=embed, view=view)
+  await ctx.message.delete()
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def painel_staff(ctx):
+  view = ServicoAdminView()
+  embed = view.gerar_embed_servico()
   await ctx.send(embed=embed, view=view)
   await ctx.message.delete()
 
 
 if __name__ == "__main__":
-  keep_alive()  # Inicia o servidor web em segundo plano
+  keep_alive()
   bot.run(os.getenv("DISCORD_TOKEN"))
-
