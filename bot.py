@@ -26,7 +26,7 @@ class FilaView(discord.ui.View):
 
   def gerar_embed(self, bot_user=None):
     embed = discord.Embed(
-        title="⚔️ Sistema de Partidas",
+        title="Sistema de Partidas",
         description="Clique nos botões abaixo para gerenciar sua entrada ou saída das filas.",
         color=discord.Color.blurple(),
     )
@@ -78,9 +78,7 @@ class FilaView(discord.ui.View):
       p1 = fila_1v1.pop(0)
       p2 = fila_1v1.pop(0)
       await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
-      await criar_sala_partida(
-          interaction.guild, p1, p2, "1v1", "Full ump & Xm8 - Primeira só desert"
-      )
+      await criar_sala_partida(interaction.guild, p1, p2, "1v1")
 
   @discord.ui.button(
       label="Entrar Pula Contra",
@@ -106,13 +104,7 @@ class FilaView(discord.ui.View):
       p1 = fila_pula_contra.pop(0)
       p2 = fila_pula_contra.pop(0)
       await interaction.message.edit(embed=self.gerar_embed(interaction.client.user))
-      await criar_sala_partida(
-          interaction.guild,
-          p1,
-          p2,
-          "Pula Contra",
-          "Full ump & Xm8 - Primeira só desert",
-      )
+      await criar_sala_partida(interaction.guild, p1, p2, "Pula Contra")
 
   @discord.ui.button(
       label="Sair da Fila",
@@ -164,12 +156,12 @@ class FilaView(discord.ui.View):
 
 class PainelPartidaView(discord.ui.View):
 
-  def __init__(self, admin, p1, p2, tipo_jogo):
+  def __init__(self, p1, p2, tipo_jogo):
     super().__init__(timeout=None)
-    self.admin = admin
     self.p1 = p1
     self.p2 = p2
     self.tipo_jogo = tipo_jogo
+    self.confirmados = set()
     self.vencedor = None
     self.tipo_vitoria = None
 
@@ -187,18 +179,35 @@ class PainelPartidaView(discord.ui.View):
       )
       return
 
-    button.disabled = True
-    await interaction.response.edit_message(
-        content=(
-            "✅ **Partida Confirmada!** Boa sorte aos jogadores. O admin"
-            f" {self.admin.mention} está no comando."
-        ),
-        view=self,
-    )
+    if interaction.user in self.confirmados:
+      await interaction.response.send_message(
+          "Você já confirmou a partida!", ephemeral=True
+      )
+      return
 
-    self.add_item(AdminVitoriaSelect(self))
-    self.add_item(FecharCanalButton(self))
-    await interaction.message.edit(view=self)
+    self.confirmados.add(interaction.user)
+    
+    if len(self.confirmados) == 2:
+      button.disabled = True
+      for child in self.children:
+        if isinstance(child, discord.ui.Button) and child.custom_id == "btn_confirma_partida":
+          child.disabled = True
+
+      await interaction.message.edit(view=self)
+      await interaction.response.send_message("Partida confirmada por ambos!", ephemeral=True)
+
+      cargo_admin = discord.utils.get(interaction.guild.roles, name="Administrador")
+      mencao_admin = cargo_admin.mention if cargo_admin else "@administrador"
+      
+      await interaction.channel.send(f"Bora trabalhar seus vagabundos {mencao_admin}")
+      
+      self.add_item(AdminVitoriaSelect(self))
+      self.add_item(FecharCanalButton(self))
+      await interaction.message.edit(view=self)
+    else:
+      await interaction.response.send_message(
+          f"Confirmação registrada! Falta apenas o outro jogador confirmar.", ephemeral=True
+      )
 
 
 class AdminVitoriaSelect(discord.ui.Select):
@@ -235,13 +244,9 @@ class AdminVitoriaSelect(discord.ui.Select):
         any(r.name in ["Dono", "Administrador"] for r in interaction.user.roles)
         or interaction.user.guild_permissions.administrator
     )
-    if (
-        interaction.user != self.partida_view.admin
-        and not is_admin
-        and interaction.user != interaction.guild.owner
-    ):
+    if not is_admin and interaction.user != interaction.guild.owner:
       await interaction.response.send_message(
-          "Apenas o Administrador sorteado ou o Dono podem definir o vencedor.",
+          "Apenas administradores ou o Dono podem definir o vencedor.",
           ephemeral=True,
       )
       return
@@ -279,13 +284,9 @@ class FecharCanalButton(discord.ui.Button):
         any(r.name in ["Dono", "Administrador"] for r in interaction.user.roles)
         or interaction.user.guild_permissions.administrator
     )
-    if (
-        interaction.user != self.partida_view.admin
-        and not is_admin
-        and interaction.user != interaction.guild.owner
-    ):
+    if not is_admin and interaction.user != interaction.guild.owner:
       await interaction.response.send_message(
-          "Apenas o Admin da partida ou o Dono podem fechar o canal.",
+          "Apenas administradores ou o Dono podem fechar o canal.",
           ephemeral=True,
       )
       return
@@ -300,7 +301,6 @@ class FecharCanalButton(discord.ui.Button):
           f"• **Tipo:** {self.partida_view.tipo_jogo}\n"
           f"• **Vencedor:** {self.partida_view.vencedor.mention}\n"
           f"• **Modo de Vitória:** {self.partida_view.tipo_vitoria}\n"
-          f"• **Admin Responsável:** {self.partida_view.admin.mention}\n"
           f"• **Data/Horário:** {agora}"
       )
       await log_channel.send(msg_log)
@@ -312,34 +312,18 @@ class FecharCanalButton(discord.ui.Button):
     await interaction.channel.delete()
 
 
-async def criar_sala_partida(guild, p1, p2, tipo_jogo, regras):
-  admins = [
-      m
-      for m in guild.members
-      if any(r.name == "Administrador" for r in m.roles)
-      and m.status != discord.Status.offline
-  ]
-  if not admins:
-    admins = [
-        m for m in guild.members if any(r.name == "Administrador" for r in m.roles)
-    ]
-
-  admin_sorteado = random.choice(admins) if admins else guild.owner
-
+async def criar_sala_partida(guild, p1, p2, tipo_jogo):
   overwrites = {
       guild.default_role: discord.PermissionOverwrite(view_channel=False),
       p1: discord.PermissionOverwrite(view_channel=True, send_messages=True),
       p2: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-      admin_sorteado: discord.PermissionOverwrite(
-          view_channel=True, send_messages=True
-      ),
       guild.me: discord.PermissionOverwrite(
           view_channel=True, send_messages=True, manage_channels=True
       ),
   }
 
   for role in guild.roles:
-    if role.name == "Dono":
+    if role.name in ["Dono", "Administrador"]:
       overwrites[role] = discord.PermissionOverwrite(
           view_channel=True, send_messages=True
       )
@@ -355,14 +339,12 @@ async def criar_sala_partida(guild, p1, p2, tipo_jogo, regras):
       name=nome_canal, category=categoria, overwrites=overwrites
   )
 
-  view = PainelPartidaView(admin_sorteado, p1, p2, tipo_jogo)
+  view = PainelPartidaView(p1, p2, tipo_jogo)
   txt = (
       f"🎮 **Nova Partida de {tipo_jogo} criada!**\n"
-      f"Jogadores: {p1.mention} vs {p2.mention}\n"
-      f"Admin Responsável: {admin_sorteado.mention}\n\n"
-      "**Regras locais:**\n"
-      f"{regras}\n"
-      "Sem jota Go macaquitos?\n\n"
+      f"Jogadores: {p1.mention} vs {p2.mention}\n\n"
+      "**Regra básica:**\n"
+      "Full Ump & Xm8 - Primeiro round Desert\n\n"
       "Clique no botão abaixo para confirmar a partida:"
   )
   await canal.send(txt, view=view)
@@ -391,6 +373,24 @@ async def atualizar_painel_ranking(guild):
       texto += f"{medalhas[i]} <@{uid}> — **{vitorias} vitórias**\n"
 
   await canal_ranking.send(texto)
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def add(ctx, membro: discord.Member, quantidade: int):
+  ranking_vitorias[membro.id] = ranking_vitorias.get(membro.id, 0) + quantidade
+  await atualizar_painel_ranking(ctx.guild)
+  await ctx.send(f"Adicionadas {quantidade} vitória(s) para {membro.mention}!")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def tirar(ctx, membro: discord.Member, quantidade: int):
+  atual = ranking_vitorias.get(membro.id, 0)
+  novo_valor = max(0, atual - quantidade)
+  ranking_vitorias[membro.id] = novo_valor
+  await atualizar_painel_ranking(ctx.guild)
+  await ctx.send(f"Removidas {quantidade} vitória(s) de {membro.mention}!")
 
 
 @bot.event
