@@ -4,8 +4,25 @@ import os
 import random
 import discord
 from discord.ext import commands
-from aiohttp import web
+from flask import Flask
+from threading import Thread
 
+# Configuração do Servidor Web Flask para o Render / UptimeRobot
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot de Partidas Online!"
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_flask)
+    t.start()
+
+# Configuração do Bot do Discord
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -409,26 +426,7 @@ async def painel(ctx):
   await ctx.message.delete()
 
 
-# Configuração do Mini Servidor Web para o Render e UptimeRobot
-async def handle(request):
-  return web.Response(text="Bot de Partidas Online!")
-
-
-async def start_web_server():
-  app = web.Application()
-  app.router.add_get("/", handle)
-  runner = web.AppRunner(app)
-  await runner.setup()
-  port = int(os.environ.get("PORT", 8080))
-  site = web.TCPSite(runner, "0.0.0.0", port)
-  await site.start()
-
-
-async def main():
-  await start_web_server()
-  await bot.start(os.getenv("DISCORD_TOKEN"))
-
-
 if __name__ == "__main__":
-  asyncio.run(main())
+  keep_alive()  # Inicia o servidor web em segundo plano
+  bot.run(os.getenv("DISCORD_TOKEN"))
 
