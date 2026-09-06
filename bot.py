@@ -364,4 +364,6 @@ async def painel(ctx):
   await ctx.message.delete()
 
 
-bot.run("MTU0NjExODMwNzg0Nzg2ODQ3NA.GAvto7.dgF3wtlRqtqiKMg8CKyE1MeMBXfvJdKSP1WEcA")
+bot.run(
+    "MTU0NjExODMwNzg0Nzg2ODQ3NA.GvgbHt.LaMpNSChN2I50jrzFq0YjmN8vVvtQTRwCdBzqc"
+)
