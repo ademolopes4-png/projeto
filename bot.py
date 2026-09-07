@@ -31,12 +31,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 fila_1v1 = []
 fila_pula_contra = []
+fila_duplas_inscritos = []  # Lista dos capitães/representantes inscritos no painel 2
 ranking_vitorias = {}
 ranking_derrotas = {}
 admins_em_servico = set()  # Guarda os IDs dos administradores em serviço
 
 LOG_CHANNEL_NAME = "logs-partidas"
-painel_mensagem_ref = None  # Guarda a referência da mensagem do painel principal para atualizar sozinha
+painel_mensagem_ref = None  # Guarda a referência da mensagem do painel principal
+painel2_mensagem_ref = None # Guarda a referência da mensagem do painel 2 (duplas)
 
 
 class FilaView(discord.ui.View):
@@ -200,6 +202,88 @@ class FilaView(discord.ui.View):
       texto += f"• <@{uid}> — **{v}** Vitórias | **{d}** Derrotas\n"
 
     await interaction.response.send_message(texto, ephemeral=True)
+
+
+class FilaDuplaView(discord.ui.View):
+  """Painel 2: Inscrição de Capitães para o Evento de Duplas / Sorteio"""
+  def __init__(self):
+    super().__init__(timeout=None)
+
+  def gerar_embed_duplas(self):
+    embed = discord.Embed(
+        title="🏆 Inscrição - Torneio de Duplas (Capitães)",
+        description=(
+            "Clique no botão abaixo para inscrever sua dupla.\n"
+            "⚠️ **Apenas o capitão/representante** deve clicar.\n\n"
+            "**Capitães Inscritos:**"
+        ),
+        color=discord.Color.dark_gold(),
+    )
+
+    if not fila_duplas_inscritos:
+      texto_inscritos = "Nenhum capitão inscrito ainda."
+    else:
+      texto_inscritos = "\n".join([f"{i+1}. {m.mention}" for i, m in enumerate(fila_duplas_inscritos)])
+
+    embed.add_field(name=f"Total Inscritos: ({len(fila_duplas_inscritos)})", value=texto_inscritos, inline=False)
+    return embed
+
+  @discord.ui.button(
+      label="Entrar na Fila (Capitão)",
+      style=discord.ButtonStyle.primary,
+      custom_id="btn_entrar_fila_dupla",
+  )
+  async def entrar_fila_dupla(self, interaction: discord.Interaction, button: discord.ui.Button):
+    user = interaction.user
+    if user in fila_duplas_inscritos:
+      fila_duplas_inscritos.remove(user)
+      msg = "Você saiu da lista de capitães inscritos."
+    else:
+      fila_duplas_inscritos.append(user)
+      msg = "Inscrição realizada com sucesso! Seu @ foi adicionado ao painel."
+
+    await atualizar_painel_duplas(interaction.client)
+    await interaction.response.send_message(msg, ephemeral=True)
+
+  @discord.ui.button(
+      label="🎲 Realizar Sorteio de Confrontos",
+      style=discord.ButtonStyle.success,
+      custom_id="btn_sorteio_duplas",
+  )
+  async def sortear_confrontos(self, interaction: discord.Interaction, button: discord.ui.Button):
+    # Verifica se é o Dono (Cargo "Dono" ou Dono do Servidor)
+    is_dono = (
+        any(r.name == "Dono" for r in interaction.user.roles)
+        or interaction.user == interaction.guild.owner
+    )
+    if not is_dono:
+      await interaction.response.send_message("Apenas o **Dono** pode realizar o sorteio do torneio!", ephemeral=True)
+      return
+
+    if len(fila_duplas_inscritos) < 2:
+      await interaction.response.send_message("É preciso ter pelo menos 2 capitães inscritos para realizar o sorteio!", ephemeral=True)
+      return
+
+    # Faz uma cópia e embaralha os capitães
+    capitaes = list(fila_duplas_inscritos)
+    random.shuffle(capitaes)
+
+    confrontos_texto = "🎲 **Sorteio de Confrontos - Capitão vs Capitão** 🎲\n\n"
+    
+    # Monta os pares
+    for i in range(0, len(capitaes) - 1, 2):
+      c1 = capitaes[i]
+      c2 = capitaes[i+1]
+      confrontos_texto += f"⚔️ {c1.mention} **VS** {c2.mention}\n"
+
+    # Se sobrarem números ímpares
+    if len(capitaes) % 2 != 0:
+      sobra = capitaes[-1]
+      confrontos_texto += f"\n🔄 {sobra.mention} avançou com **Bye** (aguarda a próxima fase ou adversário).\n"
+
+    # Envia o resultado no canal publicamente
+    await interaction.channel.send(confrontos_texto)
+    await interaction.response.send_message("Sorteio realizado com sucesso no chat!", ephemeral=True)
 
 
 class ServicoAdminView(discord.ui.View):
@@ -489,6 +573,17 @@ async def atualizar_painel_principal(client):
       pass
 
 
+async def atualizar_painel_duplas(client):
+  global painel2_mensagem_ref
+  if painel2_mensagem_ref:
+    try:
+      view = FilaDuplaView()
+      embed = view.gerar_embed_duplas()
+      await painel2_mensagem_ref.edit(embed=embed, view=view)
+    except Exception:
+      pass
+
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def add(ctx, membro: discord.Member, quantidade: int):
@@ -511,6 +606,7 @@ async def tirar(ctx, membro: discord.Member, quantidade: int):
 async def on_ready():
   print(f"Bot conectado como {bot.user}!")
   bot.add_view(FilaView())
+  bot.add_view(FilaDuplaView())
   bot.add_view(ServicoAdminView())
 
 
@@ -526,6 +622,16 @@ async def painel(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def painel2(ctx):
+  global painel2_mensagem_ref
+  view = FilaDuplaView()
+  embed = view.gerar_embed_duplas()
+  painel2_mensagem_ref = await ctx.send(embed=embed, view=view)
+  await ctx.message.delete()
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def painel_staff(ctx):
   view = ServicoAdminView()
   embed = view.gerar_embed_servico()
@@ -536,3 +642,4 @@ async def painel_staff(ctx):
 if __name__ == "__main__":
   keep_alive()
   bot.run(os.getenv("DISCORD_TOKEN"))
+
