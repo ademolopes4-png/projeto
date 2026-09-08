@@ -77,7 +77,6 @@ class FilaView(discord.ui.View):
 
     embed.add_field(name="💀 Top 3 Derrotas", value=texto_der, inline=True)
 
-    # Espaçamento visual
     embed.add_field(name="\u200b", value="\u200b", inline=False)
 
     # --- FILAS ---
@@ -213,8 +212,8 @@ class FilaDuplaView(discord.ui.View):
     embed = discord.Embed(
         title="🏆 Inscrição - Torneio de Duplas (Capitães)",
         description=(
-            "Clique no botão abaixo para inscrever sua dupla.\n"
-            "⚠️ **Apenas o capitão/representante** deve clicar.\n\n"
+            "Clique nos botões abaixo para gerenciar sua inscrição.\n"
+            "⚠️ **Apenas o capitão/representante** deve se inscrever.\n\n"
             "**Capitães Inscritos:**"
         ),
         color=discord.Color.dark_gold(),
@@ -229,21 +228,34 @@ class FilaDuplaView(discord.ui.View):
     return embed
 
   @discord.ui.button(
-      label="Entrar na Fila (Capitão)",
+      label="Entrar na Fila",
       style=discord.ButtonStyle.primary,
       custom_id="btn_entrar_fila_dupla",
   )
   async def entrar_fila_dupla(self, interaction: discord.Interaction, button: discord.ui.Button):
     user = interaction.user
     if user in fila_duplas_inscritos:
-      fila_duplas_inscritos.remove(user)
-      msg = "Você saiu da lista de capitães inscritos."
-    else:
-      fila_duplas_inscritos.append(user)
-      msg = "Inscrição realizada com sucesso! Seu @ foi adicionado ao painel."
+      await interaction.response.send_message("Você já está inscrito na fila de duplas!", ephemeral=True)
+      return
 
+    fila_duplas_inscritos.append(user)
     await atualizar_painel_duplas(interaction.client)
-    await interaction.response.send_message(msg, ephemeral=True)
+    await interaction.response.send_message("Inscrição realizada com sucesso! Seu @ foi adicionado ao painel.", ephemeral=True)
+
+  @discord.ui.button(
+      label="Sair da Fila",
+      style=discord.ButtonStyle.danger,
+      custom_id="btn_sair_fila_dupla",
+  )
+  async def sair_fila_dupla(self, interaction: discord.Interaction, button: discord.ui.Button):
+    user = interaction.user
+    if user not in fila_duplas_inscritos:
+      await interaction.response.send_message("Você não está inscrito nesta fila.", ephemeral=True)
+      return
+
+    fila_duplas_inscritos.remove(user)
+    await atualizar_painel_duplas(interaction.client)
+    await interaction.response.send_message("Você saiu da lista de capitães inscritos.", ephemeral=True)
 
   @discord.ui.button(
       label="🎲 Realizar Sorteio de Confrontos",
@@ -251,7 +263,6 @@ class FilaDuplaView(discord.ui.View):
       custom_id="btn_sorteio_duplas",
   )
   async def sortear_confrontos(self, interaction: discord.Interaction, button: discord.ui.Button):
-    # Verifica se é o Dono (Cargo "Dono" ou Dono do Servidor)
     is_dono = (
         any(r.name == "Dono" for r in interaction.user.roles)
         or interaction.user == interaction.guild.owner
@@ -264,26 +275,181 @@ class FilaDuplaView(discord.ui.View):
       await interaction.response.send_message("É preciso ter pelo menos 2 capitães inscritos para realizar o sorteio!", ephemeral=True)
       return
 
-    # Faz uma cópia e embaralha os capitães
     capitaes = list(fila_duplas_inscritos)
     random.shuffle(capitaes)
 
     confrontos_texto = "🎲 **Sorteio de Confrontos - Capitão vs Capitão** 🎲\n\n"
     
-    # Monta os pares
     for i in range(0, len(capitaes) - 1, 2):
       c1 = capitaes[i]
       c2 = capitaes[i+1]
       confrontos_texto += f"⚔️ {c1.mention} **VS** {c2.mention}\n"
 
-    # Se sobrarem números ímpares
     if len(capitaes) % 2 != 0:
       sobra = capitaes[-1]
       confrontos_texto += f"\n🔄 {sobra.mention} avançou com **Bye** (aguarda a próxima fase ou adversário).\n"
 
-    # Envia o resultado no canal publicamente
     await interaction.channel.send(confrontos_texto)
     await interaction.response.send_message("Sorteio realizado com sucesso no chat!", ephemeral=True)
+
+
+# --- SISTEMA DE TICKETS ---
+
+class TicketSelectView(discord.ui.View):
+  """Painel principal do Ticket (Mensagem fixa enviada por !painelticket)"""
+  def __init__(self):
+    super().__init__(timeout=None)
+    self.add_item(TicketSelectDropdown())
+
+class TicketSelectDropdown(discord.ui.Select):
+  def __init__(self):
+    options = [
+        discord.SelectOption(
+            label="Abrir Chamado",
+            description="Clique aqui para iniciar um atendimento.",
+            emoji="🎫",
+            value="abrir_chamado"
+        )
+    ]
+    super().__init__(
+        placeholder="Selecione uma função...",
+        min_values=1,
+        max_values=1,
+        options=options,
+        custom_id="ticket_dropdown_menu"
+    )
+
+  async def callback(self, interaction: discord.Interaction):
+    if self.values[0] == "abrir_chamado":
+      await criar_sala_ticket(interaction)
+
+
+class TicketControlView(discord.ui.View):
+  """Painel interno dentro da sala privada do Ticket"""
+  def __init__(self, criador_id, horario_abertura):
+    super().__init__(timeout=None)
+    self.criador_id = criador_id
+    self.horario_abertura = horario_abertura
+    self.assumido_por = None
+
+  @discord.ui.button(
+      label="Assumir Chamado",
+      style=discord.ButtonStyle.success,
+      custom_id="btn_assumir_chamado"
+  )
+  async def assumir_chamado(self, interaction: discord.Interaction, button: discord.ui.Button):
+    is_admin = (
+        any(r.name in ["Dono", "Administrador"] for r in interaction.user.roles)
+        or interaction.user.guild_permissions.administrator
+        or interaction.user == interaction.guild.owner
+    )
+    if not is_admin:
+      await interaction.response.send_message("Apenas administradores ou o Dono podem assumir o chamado.", ephemeral=True)
+      return
+
+    if self.assumido_por:
+      await interaction.response.send_message(f"Este chamado já foi assumido por <@{self.assumido_por}>.", ephemeral=True)
+      return
+
+    self.assumido_por = interaction.user.id
+    button.disabled = True
+    await interaction.message.edit(view=self)
+
+    # Oculta o canal para todos os cargos normais/staff, deixando visível apenas para o Dono e o criador
+    guild = interaction.guild
+    canal = interaction.channel
+    criador = guild.get_member(self.criador_id)
+
+    # Remove permissão do @everyone
+    await canal.set_permissions(guild.default_role, view_channel=False)
+
+    # Restaura permissão exata para o criador e para quem assumiu
+    if criador:
+      await canal.set_permissions(criador, view_channel=True, send_messages=True)
+    await canal.set_permissions(interaction.user, view_channel=True, send_messages=True)
+
+    # Garante que o Dono do servidor também continue vendo se houver
+    if guild.owner:
+      await canal.set_permissions(guild.owner, view_channel=True, send_messages=True)
+
+    await interaction.response.send_message(
+        f"🛡️ Chamado assumido por {interaction.user.mention}! O canal foi ocultado para os demais administradores."
+    )
+
+  @discord.ui.button(
+      label="Fechar Chamado",
+      style=discord.ButtonStyle.danger,
+      custom_id="btn_fechar_chamado"
+  )
+  async def fechar_chamado(self, interaction: discord.Interaction, button: discord.ui.Button):
+    is_admin = (
+        any(r.name in ["Dono", "Administrador"] for r in interaction.user.roles)
+        or interaction.user.guild_permissions.administrator
+        or interaction.user == interaction.guild.owner
+    )
+    if not is_admin:
+      await interaction.response.send_message("Apenas administradores ou o Dono podem fechar o chamado.", ephemeral=True)
+      return
+
+    guild = interaction.guild
+    canal = interaction.channel
+    criador = guild.get_member(self.criador_id)
+    assumidor = guild.get_member(self.assumido_por) if self.assumido_por else interaction.user
+
+    horario_fim = datetime.datetime.now().strftime("%d/%m/%Y às %H:%M")
+    log_channel = discord.utils.get(guild.text_channels, name=LOG_CHANNEL_NAME)
+
+    if log_channel:
+      msg_log = (
+          f"📋 **Registro de Chamado / Ticket Fechado**\n"
+          f"• **Criador do Chamado:** {criador.mention if criador else f'<@{self.criador_id}>'}\n"
+          f"• **Assumido por:** {assumidor.mention if assumidor else 'Ninguém assumiu'}\n"
+          f"• **Fechado por:** {interaction.user.mention}\n"
+          f"• **Data de Abertura:** {self.horario_abertura}\n"
+          f"• **Data de Fechamento:** {horario_fim}"
+      )
+      await log_channel.send(msg_log)
+
+    await interaction.response.send_message("Fechando e apagando o canal do ticket...", ephemeral=True)
+    await asyncio.sleep(2)
+    await canal.delete()
+
+
+async def criar_sala_ticket(interaction: discord.Interaction):
+  guild = interaction.guild
+  user = interaction.user
+
+  overwrites = {
+      guild.default_role: discord.PermissionOverwrite(view_channel=False),
+      user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
+      guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
+  }
+
+  # Permite que todos os administradores vejam inicialmente antes de alguém assumir
+  cargo_admin = discord.utils.get(guild.roles, name="Administrador")
+  if cargo_admin:
+    overwrites[cargo_admin] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+  if guild.owner:
+    overwrites[guild.owner] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
+
+  categoria = discord.utils.get(guild.categories, name="[🎫] TICKETS")
+  if not categoria:
+    categoria = await guild.create_category("[🎫] TICKETS")
+
+  nome_canal = f"ticket-{user.name[:10]}".lower().replace(" ", "-")
+  canal = await guild.create_text_channel(name=nome_canal, category=categoria, overwrites=overwrites)
+
+  horario_abertura = datetime.datetime.now().strftime("%d/%m/%Y às %H:%M")
+  view = TicketControlView(user.id, horario_abertura)
+
+  embed = discord.Embed(
+      title="Atendimento de Chamado",
+      description=f"Olá {user.mention}, um atendente/administrador irá te atender em breve.\nUtilize os botões abaixo para gerenciar este chamado.",
+      color=discord.Color.green()
+  )
+
+  await canal.send(f"{user.mention} seu ticket foi aberto aqui!", embed=embed, view=view)
+  await interaction.response.send_message(f"Seu canal de atendimento foi criado: {canal.mention}", ephemeral=True)
 
 
 class ServicoAdminView(discord.ui.View):
@@ -452,11 +618,9 @@ class AdminVitoriaSelect(discord.ui.Select):
     self.partida_view.perdedor = self.partida_view.p2 if self.partida_view.vencedor == self.partida_view.p1 else self.partida_view.p1
     self.partida_view.finalizador = interaction.user
 
-    # Atualiza placar geral
     ranking_vitorias[self.partida_view.vencedor.id] = ranking_vitorias.get(self.partida_view.vencedor.id, 0) + 1
     ranking_derrotas[self.partida_view.perdedor.id] = ranking_derrotas.get(self.partida_view.perdedor.id, 0) + 1
 
-    # Atualiza o painel principal com os novos Tops
     await atualizar_painel_principal(interaction.client)
 
     await interaction.response.send_message(
@@ -584,6 +748,8 @@ async def atualizar_painel_duplas(client):
       pass
 
 
+# --- COMANDOS ADMINISTRATIVOS ---
+
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def add(ctx, membro: discord.Member, quantidade: int):
@@ -602,12 +768,37 @@ async def tirar(ctx, membro: discord.Member, quantidade: int):
   await ctx.send(f"Removidas {quantidade} vitória(s) de {membro.mention}!")
 
 
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def adddupla(ctx, membro: discord.Member):
+  if membro in fila_duplas_inscritos:
+    await ctx.send(f"{membro.mention} já está na lista do painel de duplas!")
+    return
+  
+  fila_duplas_inscritos.append(membro)
+  await atualizar_painel_duplas(ctx.bot)
+  await ctx.send(f"Capitão {membro.mention} adicionado à força na fila de duplas!")
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def tirardupla(ctx, membro: discord.Member):
+  if membro not in fila_duplas_inscritos:
+    await ctx.send(f"{membro.mention} não está na lista do painel de duplas.")
+    return
+  
+  fila_duplas_inscritos.remove(membro)
+  await atualizar_painel_duplas(ctx.bot)
+  await ctx.send(f"Capitão {membro.mention} removido da fila de duplas!")
+
+
 @bot.event
 async def on_ready():
   print(f"Bot conectado como {bot.user}!")
   bot.add_view(FilaView())
   bot.add_view(FilaDuplaView())
   bot.add_view(ServicoAdminView())
+  bot.add_view(TicketSelectView())
 
 
 @bot.command()
@@ -632,6 +823,19 @@ async def painel2(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
+async def painelticket(ctx):
+  view = TicketSelectView()
+  embed = discord.Embed(
+      title="Central de Atendimento JS SYSTEM",
+      description="Selecione uma das opções abaixo para abrir um ticket. Um de nossos atendentes irá te ajudar em breve!",
+      color=discord.Color.dark_purple()
+  )
+  await ctx.send(embed=embed, view=view)
+  await ctx.message.delete()
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
 async def painel_staff(ctx):
   view = ServicoAdminView()
   embed = view.gerar_embed_servico()
@@ -642,4 +846,3 @@ async def painel_staff(ctx):
 if __name__ == "__main__":
   keep_alive()
   bot.run(os.getenv("DISCORD_TOKEN"))
-
