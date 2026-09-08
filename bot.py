@@ -826,7 +826,7 @@ async def painel2(ctx):
 async def painelticket(ctx):
   view = TicketSelectView()
   embed = discord.Embed(
-      title="Central de Atendimento JS SYSTEM",
+      title="Dz resolve teu B.O 🫡",
       description="Selecione uma das opções abaixo para abrir um ticket. Um de nossos atendentes irá te ajudar em breve!",
       color=discord.Color.dark_purple()
   )
@@ -846,3 +846,4 @@ async def painel_staff(ctx):
 if __name__ == "__main__":
   keep_alive()
   bot.run(os.getenv("DISCORD_TOKEN"))
+
